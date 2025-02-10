@@ -493,8 +493,8 @@ def preporess_data_sections():
     test = transform_dict(test, temp)
 
     print('step 3')
+    temp = MeanNormalizationScaler()
     train_combined = temp.fit_transform(train_combined)
-    temp.fit(train_combined)
     train = transform_dict(train, temp)
     test = transform_dict(test, temp)
     print('step 4')

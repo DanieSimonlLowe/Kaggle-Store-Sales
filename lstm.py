@@ -4,10 +4,13 @@ from data import load_train_sections, split_dict
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from bayes_opt import BayesianOptimization
+from sklearn.linear_model import LinearRegression
 import math
+import pandas as pd
+from base_model import BaseModel
 
 class LSTMRegress(nn.Module):
-    def __init__(self, hidden_dim, num_layers=2, dropout_rate=0.1, l2=0.001):
+    def __init__(self, base_model, hidden_dim, num_layers=2, dropout_rate=0.1, l2=0.001):
         super(LSTMRegress, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers  
@@ -21,12 +24,12 @@ class LSTMRegress(nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
         # The linear layer that maps from hidden state space to tag space
         self.hidden2out = nn.Linear(hidden_dim, 33)
-
-        self.plus = nn.Softplus()
+        self.softplus = nn.Softplus()
 
         self.l2 = l2
+        self.base_model = base_model
 
-    def forward(self, x: torch.Tensor, h0=None, c0=None):
+    def forward(self, x: torch.Tensor, store, h0=None, c0=None):
         
         if h0 is None or c0 is None:
             lstm_out, (hn, cn) = self.lstm(x)
@@ -35,13 +38,21 @@ class LSTMRegress(nn.Module):
 
         out = self.dropout(lstm_out)
         out = self.hidden2out(out)
+        out = self.softplus(out)
 
-        return self.plus(out), hn, cn
+        temp = self.base_model.predict(store,x)
+        out *= torch.transpose(temp, 0, 1)
+
+        return out, hn, cn
+            
+
     
     def fit(self, xs: dict, ys: dict, loops=25):
         for store in xs.keys():
+            
             if not isinstance(xs[store], torch.Tensor):
                 xs[store] = torch.from_numpy(xs[store].values).to(torch.float32)
+                
             if not isinstance(ys[store], torch.Tensor):
                 ys[store] = torch.from_numpy(ys[store].values).to(torch.float32)
         
@@ -63,7 +74,7 @@ class LSTMRegress(nn.Module):
                 for x, y in loader:
                     optimizer.zero_grad()
 
-                    outputs, h0, c0 = self(x,h0,c0)
+                    outputs, h0, c0 = self(x,store,h0,c0)
                     mask = ~torch.isnan(y)
                     loss = MSELoss(outputs[mask],y[mask])
 
@@ -92,14 +103,14 @@ class LSTMRegress(nn.Module):
             ss_tot = 0
             for store in xs.keys():
                 if store in x_before:
-                    _, h0, c0 = self(x_before[store],)
+                    _, h0, c0 = self(x_before[store],store)
                 else:
                     h0, c0 = None, None
 
                 x = xs[store]
                 y = ys[store]
                 
-                y_pred, _, _ = self(x, h0, c0)
+                y_pred, _, _ = self(x, store, h0, c0)
 
                 y = y.to(y_pred.device)
                 mask = ~torch.isnan(y)
@@ -113,11 +124,13 @@ class LSTMRegress(nn.Module):
             return -100
         else:
             return temp
-  
+
+
 
 def getParamters():
     x_train, y_train, x_test, y_test = load_train_sections()
     print('loaded')
+    print(x_train[1].columns.get_loc('day_count'))
 
     param_space = {
         'hidden_dim': (20, 200),
@@ -126,13 +139,15 @@ def getParamters():
         'l2': (0, 5e-2)
     }
 
+    base_model = BaseModel(x_train,y_train)
+
     def objective(hidden_dim=10, num_layers=2, dropout_rate=0.1, l2=0.001):
         hidden_dim = int(round(hidden_dim))
         num_layers = int(round(num_layers))
 
         x_0, x_1 = split_dict(x_train)
         y_0, y_1 = split_dict(y_train)
-        model = LSTMRegress(58,hidden_dim,33,num_layers,dropout_rate,l2)
+        model = LSTMRegress(base_model,hidden_dim,num_layers,dropout_rate,l2)
         model.fit(x_0,y_0)
 
         temp = model.score(x_1,y_1,x_0)
@@ -146,7 +161,7 @@ def getParamters():
 
     model.maximize(n_iter=30)
 
-    # 0.4676
+    # {'target': 0.9181133072782891, 'params': {'dropout_rate': 0.3067193001160901, 'hidden_dim': 70.13865827406954, 'l2': 0.012635622343381815, 'num_layers': 2.0385343002566065}}
     print(model.max)
     return model.max
 
