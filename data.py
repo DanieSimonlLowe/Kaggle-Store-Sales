@@ -4,6 +4,7 @@ from feature_engine.selection import DropConstantFeatures
 from feature_engine.imputation import MeanMedianImputer
 from feature_engine.scaling import MeanNormalizationScaler
 from sklearn.model_selection import train_test_split
+from feature_engine.timeseries.forecasting import LagFeatures
 import numpy as np
 
 def loadDataBase(dataset, encoder=None):
@@ -384,6 +385,8 @@ def loadDataSections(df,encoder = None):
         for char in ['A','B','C','D','E']:
             pivoted.loc[:, 'store_type_' + char] = storeType == char
 
+
+
         
         temp = pd.merge(pivoted, oil, on='date', how='left')
         pivoted.loc[:,'dcoilwtico'] = temp['dcoilwtico']
@@ -435,14 +438,16 @@ def loadDataSectionsY(df):
         pivoted = store_df.pivot_table(
             index='date',
             columns='family',
-            values=['sales'],
+            values='sales',
             aggfunc='first'
         )
 
-        pivoted = pivoted.reset_index()
+        pivoted = pivoted.reindex(columns=all_families)
 
-        pivoted = pivoted.drop('date', axis=1)
+        pivoted = pivoted.reset_index(drop=True)
+        print(pivoted)
         pivoted = pivoted.apply(pd.to_numeric)
+        print(pivoted)
         store_dfs[store] = pivoted
     return store_dfs
 
@@ -500,9 +505,7 @@ def preporess_data_sections():
     print('step 4')
     
     y = loadDataSectionsY(train_df)
-    
-    for store in y.keys():
-        y[store] = y[store].apply(pd.to_numeric, errors='coerce')
+
 
     print('step 5')
     
@@ -529,11 +532,7 @@ def split_dict(dfs: dict, split=0.9):
 def load_train_sections():
     print('load')
     x, y = pickle.load(open('C:\\Users\\Danie\\Desktop\\work\\kaggle\\store-sales\\data\\train.pkl', 'rb'))
-    print('step 1')
-    print(x[1].shape)
-    print(y[1].shape)
     
-
     
     print('step 2')
     x_train, x_test = split_dict(x)
@@ -542,6 +541,38 @@ def load_train_sections():
     
 
     return x_train, y_train, x_test, y_test
+
+
+
+def load_train_sections_combined(lags=None):
+    x, y = pickle.load(open('C:\\Users\\Danie\\Desktop\\work\\kaggle\\store-sales\\data\\train.pkl', 'rb'))
+    
+    if lags != None:
+        lf = LagFeatures(periods=lags)
+        for store in x.keys():
+            x[store] = lf.fit_transform(x[store])
+        
+        inputer = MeanMedianImputer()
+        inputer.fit(combine(x))
+        for store in x.keys():
+            x[store] = inputer.transform(x[store])
+
+        dc = DropConstantFeatures()
+        dc.fit(combine(x))
+        for store in x.keys():
+            x[store] = dc.transform(x[store])
+    
+    x_train, x_test = split_dict(x)
+    y_train, y_test = split_dict(y)
+
+    x_train = combine(x_train)
+    x_test = combine(x_test)
+
+    y_train = combine(y_train)
+    y_test = combine(y_test)
+
+    return x_train, x_test, y_train, y_test
+
 
 import matplotlib.pyplot as plt
 
@@ -568,5 +599,5 @@ def getHistagram():
 
 if __name__ == '__main__':
     # TODO add detrend into this
+    #preporess_data_sections()
     preporess_data_sections()
-    #load_train_sections()
